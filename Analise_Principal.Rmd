@@ -1,0 +1,281 @@
+---
+title: "3 - Testes modelos"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Se usar a origem o arquivo RDA, já considera o merge feito.
+Caso contrário ele vai considerar como origem os arquivos CSV e vai gerar o rda a partir deles:
+
+```{r}
+origem_dados_arq_rda = TRUE
+```
+
+## 
+
+Primeiro vamos abrir os dados e fazer o merge com a base de indicadores AFD (Adequação da formação docente):
+
+```{r}
+if (origem_dados_arq_rda) {
+  # Os dados estão na variável df
+  load('data/complete_data.rda')
+} else {
+  # Lê a base de dados e notas do saeb
+  load('microdados_nota_saeb_pe.rda')
+  
+  # Aqui temos 2039 registros
+  df = df_microdados_nota_saeb
+  df$NU_ANO_CENSO = as.factor(df$NU_ANO_CENSO)
+  
+  # Lê as bases de indicadores AFD (adequação da formação docente) e faz o merge
+  # A base AFD está completa, continuamos com 2039 registros
+  afd_2017 = read.csv2('dados/AFD_ESCOLAS_2017.csv', na.strings=c('--'), dec=',')
+  afd_2019 = read.csv2('dados/AFD_ESCOLAS_2019.csv', na.strings=c('--'), dec=',')
+  afd_2021 = read.csv2('dados/AFD_ESCOLAS_2021.csv', na.strings=c('--'), dec=',')
+  
+  afd_2017$NU_ANO_CENSO = 2017
+  afd_2019$NU_ANO_CENSO = 2019
+  afd_2021$NU_ANO_CENSO = 2021
+  
+  afd = rbind(afd_2017, afd_2019, afd_2021)
+  
+  df = merge(df, afd, by=c('CO_ENTIDADE', 'NU_ANO_CENSO'))
+  
+  # Lê as bases de indicadores ATU (média de alunos por turma) e faz o merge
+  # A base está completa, continuamos com 2039 registros
+  atu_2017 = read.csv2('dados/ATU_ESCOLAS_2017.csv', na.strings=c('--'), dec=',')
+  atu_2019 = read.csv2('dados/ATU_ESCOLAS_2019.csv', na.strings=c('--'), dec=',')
+  atu_2021 = read.csv2('dados/ATU_ESCOLAS_2021.csv', na.strings=c('--'), dec=',')
+  
+  atu_2017$NU_ANO_CENSO = 2017
+  atu_2019$NU_ANO_CENSO = 2019
+  atu_2021$NU_ANO_CENSO = 2021
+  
+  atu = rbind(atu_2017, atu_2019, atu_2021)
+  
+  df = merge(df, atu, by=c('CO_ENTIDADE', 'NU_ANO_CENSO'))
+  
+  # Lê as bases de indicadores IRD (média de regularidade do docente) e faz o merge
+  # A base não está completa, faltam 29 registros (10 de 2017, 13 de 2019 e 6 de 2021 - passamos para 2010 registros aqui)
+  ird_2017 = read.csv2('dados/IRD_ESCOLAS_2017.csv', na.strings=c('--'), dec=',')
+  ird_2019 = read.csv2('dados/IRD_ESCOLAS_2019.csv', na.strings=c('--'), dec=',')
+  ird_2021 = read.csv2('dados/IRD_ESCOLAS_2021.csv', na.strings=c('--'), dec=',')
+  
+  ird_2017$NU_ANO_CENSO = 2017
+  ird_2019$NU_ANO_CENSO = 2019
+  ird_2021$NU_ANO_CENSO = 2021
+  
+  ird = rbind(ird_2017, ird_2019, ird_2021)
+  
+  df = merge(df, ird, by=c('CO_ENTIDADE', 'NU_ANO_CENSO'), all.x = TRUE)
+  
+  # Lê o indicador socioeconômico.
+  # Aqui temos os dados a cada 4 anos. Vou pegar o de 2019 e considerar
+  # como 2019 e 2021. Poderia também pegar o de 2015 e considerar como 2017,
+  # mas a forma de cálculo mudou, então vou deixar apenas 2019/2021 mesemo
+  
+  inse_2019 = read.csv2('dados/INSE_2019_ESCOLAS.csv')
+  inse_2021 = inse_2019
+  
+  inse_2019$NU_ANO_CENSO = 2019
+  inse_2021$NU_ANO_CENSO = 2021
+  
+  inse = rbind(inse_2019, inse_2021)
+  
+  df = merge(df, inse, by=c('CO_ENTIDADE', 'NU_ANO_CENSO'), all.x = TRUE)
+  
+  save(df, file='microdados_e_indicadores.rda')
+}
+```
+
+Começa filtrando os dados de 2017 e removendo os registros com 88888 (1 registro em cada ano)
+
+```{r}
+df = df[df$NU_ANO_CENSO != 2017, ]
+# Ver se ainda precisamos remover esses registros, pois na prática agora já não estamos mais usando QT_PROF_MONITORES
+df = df[df$QT_PROF_MONITORES != 88888,]
+```
+
+Para comparar modelos sempre usando os mesmos registros, vamos remover os dados onde IRD = NULL:
+
+(Obs: Se no final do processo não formos usar IRD, podemos comentar essa linha)
+
+```{r}
+df = df[!is.na(df$IRD), ]
+```
+
+Colocando as variáveis que o Bruno encontrou para 17-19-21 nesse modelo e checando:
+
+
+```{r}
+df$PROP_INTEGRAL = df$QT_MAT_MED_INT/df$QT_MAT_MED
+
+modelo = lm(NOTA_SAEB ~ NU_ANO_CENSO + QT_SALAS_UTILIZA_CLIMATIZADAS + IN_QUADRA_ESPORTES_COBERTA + IN_MODULOS + IN_ORGAO_GREMIO_ESTUDANTIL + IN_ORGAO_OUTROS + PROP_INTEGRAL + QT_PROF_ALIMENTACAO + log(QT_DESKTOP_ALUNO/100 + 1) + IN_LOCAL_FUNC_SALAS_OUTRA_ESC + IN_BANHEIRO_EI + IN_ALIMENTACAO + IN_EJA_MED + IN_REFEITORIO + IN_SECRETARIA + IN_COZINHA + IN_LIXO_SERVICO_COLETA + as.factor(TP_OCUPACAO_PREDIO_ESCOLAR) + as.factor(TP_REGULAMENTACAO), df)
+summary(modelo)
+```
+
+Remove as que são diferentes de 0:
+
+``` {r}
+modelo = lm(NOTA_SAEB ~ NU_ANO_CENSO + QT_SALAS_UTILIZA_CLIMATIZADAS + IN_QUADRA_ESPORTES_COBERTA + IN_ORGAO_GREMIO_ESTUDANTIL + IN_ORGAO_OUTROS + PROP_INTEGRAL + QT_PROF_ALIMENTACAO + log(QT_DESKTOP_ALUNO/100 + 1) + IN_BANHEIRO_EI +  IN_EJA_MED + IN_SECRETARIA + IN_COZINHA + IN_LIXO_SERVICO_COLETA, df)
+summary(modelo)
+```
+## INDICADORES AFD
+
+Agora vamos colocar os dados dos indicadores no modelo que já temos:
+
+``` {r}
+modelo = lm(NOTA_SAEB ~ NU_ANO_CENSO + QT_SALAS_UTILIZA_CLIMATIZADAS + IN_QUADRA_ESPORTES_COBERTA + IN_ORGAO_GREMIO_ESTUDANTIL + IN_ORGAO_OUTROS + PROP_INTEGRAL + QT_PROF_ALIMENTACAO + log(QT_DESKTOP_ALUNO/100 + 1) + IN_BANHEIRO_EI +  IN_EJA_MED + IN_SECRETARIA + IN_COZINHA + IN_LIXO_SERVICO_COLETA + AFD_CAT_1 + AFD_CAT_2 + AFD_CAT_3 + AFD_CAT_4 + AFD_CAT_5, df)
+summary(modelo)
+```
+
+Com esse resultado, vamos manter apenas os indicadores 1 e 2 do AFD:
+
+```{r}
+modelo = lm(NOTA_SAEB ~ NU_ANO_CENSO + QT_SALAS_UTILIZA_CLIMATIZADAS + IN_QUADRA_ESPORTES_COBERTA + IN_ORGAO_GREMIO_ESTUDANTIL + IN_ORGAO_OUTROS + PROP_INTEGRAL + QT_PROF_ALIMENTACAO + log(QT_DESKTOP_ALUNO/100 + 1) + IN_BANHEIRO_EI +  IN_EJA_MED + IN_SECRETARIA + IN_COZINHA + IN_LIXO_SERVICO_COLETA + AFD_CAT_1 + AFD_CAT_2, df)
+summary(modelo)
+```
+
+Estamos com muitas variáveis no modelo. Vamos fazer um drop1 pra ver como fica o R2
+
+```{r}
+# Essa função auxiliar remove Y de X. 
+# Se X for um data.frame, Y é interpretado como as colunas
+# e o retorno é o data frame X sem as colunas
+# Caso contrário, retorna x-y
+remove_y_de_x = function(x, y) {
+  if (class(x) == 'data.frame') {
+    for (nome_variavel in y) {
+      df[, nome_variavel] = NULL
+    }
+    return (df)
+  }
+  return( setdiff(x, y) )
+}
+
+printa_r2_drop1 = function(df, variaveis_interesse) {
+  df_analise = df[, variaveis_interesse]
+  todas_variaveis_explicativas = setdiff(variaveis_interesse, c('NOTA_SAEB'))
+  
+  r2 = c()
+  
+  for (var in todas_variaveis_explicativas) {
+    variaveis_explicativas_menos_uma = remove_y_de_x(todas_variaveis_explicativas, var)
+    df_temp_modelo = df_analise[, c(variaveis_explicativas_menos_uma, 'NOTA_SAEB')]
+    modelo = lm(NOTA_SAEB ~ ., df_temp_modelo)
+    r2 = c(r2, 100*summary(modelo)$r.squared)
+  }
+  df_analise_r2 = data.frame(todas_variaveis_explicativas, r2)
+  df_analise_r2 = df_analise_r2[order(-df_analise_r2$r2),]
+  
+  print(df_analise_r2)
+}
+variaveis_interesse = c('NOTA_SAEB', 'NU_ANO_CENSO', 'QT_SALAS_UTILIZA_CLIMATIZADAS', 'IN_QUADRA_ESPORTES_COBERTA', 'IN_ORGAO_GREMIO_ESTUDANTIL', 'IN_ORGAO_OUTROS', 'PROP_INTEGRAL', 'QT_PROF_ALIMENTACAO', 'QT_DESKTOP_ALUNO', 'IN_BANHEIRO_EI', 'IN_EJA_MED', 'IN_SECRETARIA', 'IN_COZINHA', 'IN_LIXO_SERVICO_COLETA', 'AFD_CAT_1', 'AFD_CAT_2')
+printa_r2_drop1(df, variaveis_interesse)
+```
+
+De acordo com esses dados, vou remover variáveis de forma que o R2 fique acima dos 46 (que é o valor que estava antes de colocar indicador):
+
+```{r}
+modelo = lm(NOTA_SAEB ~ NU_ANO_CENSO + QT_SALAS_UTILIZA_CLIMATIZADAS + IN_QUADRA_ESPORTES_COBERTA + IN_ORGAO_GREMIO_ESTUDANTIL + IN_ORGAO_OUTROS + PROP_INTEGRAL + log(QT_DESKTOP_ALUNO/100 + 1) + IN_BANHEIRO_EI +  IN_EJA_MED + IN_SECRETARIA + AFD_CAT_1, df)
+summary(modelo)
+plot(modelo)
+```
+
+Nesse ponto temos 11 variáveis.
+
+## INDICADORES ATU
+
+```{r}
+modelo = lm(NOTA_SAEB ~ NU_ANO_CENSO + QT_SALAS_UTILIZA_CLIMATIZADAS + IN_QUADRA_ESPORTES_COBERTA + IN_ORGAO_GREMIO_ESTUDANTIL + IN_ORGAO_OUTROS + PROP_INTEGRAL + log(QT_DESKTOP_ALUNO/100 + 1) + IN_BANHEIRO_EI + IN_EJA_MED + IN_SECRETARIA + AFD_CAT_1 + ATU_TOTAL, df)
+summary(modelo)
+```
+Se colocarmos todos os coeficientes no modelo de ATU (Total, série 1, série 2 e série 3), nenhum será estatisticamente diferente de 0. Colocando apenas ATU_TOTAL (a média dos 3), ele é estatisticamente diferente de 0 pra p < 0.1 apenas. Na verdade, se desconsiderarmos o merge da base IRD que faz reduzir 19 registros de 2019 e 2021, o coeficiente até fica estatisticamente dif de 0 com p < 0.05. É muito frágil, não vale a pena considerar essa variável. Vamos voltar pro modelo que tínhamos antes:
+
+```{r}
+modelo = lm(NOTA_SAEB ~ NU_ANO_CENSO + QT_SALAS_UTILIZA_CLIMATIZADAS + IN_QUADRA_ESPORTES_COBERTA + IN_ORGAO_GREMIO_ESTUDANTIL + IN_ORGAO_OUTROS + PROP_INTEGRAL + log(QT_DESKTOP_ALUNO/100 + 1) + IN_BANHEIRO_EI + IN_EJA_MED + IN_SECRETARIA + AFD_CAT_1, df)
+summary(modelo)
+```
+
+## INDICADOR IRD
+
+```{r}
+modelo = lm(NOTA_SAEB ~ NU_ANO_CENSO + QT_SALAS_UTILIZA_CLIMATIZADAS + IN_QUADRA_ESPORTES_COBERTA + IN_ORGAO_GREMIO_ESTUDANTIL + IN_ORGAO_OUTROS + PROP_INTEGRAL + log(QT_DESKTOP_ALUNO/100 + 1) + IN_BANHEIRO_EI + IN_EJA_MED + IN_SECRETARIA + AFD_CAT_1 + IRD, df)
+summary(modelo)
+plot(modelo)
+```
+
+Uma observação aqui é que até então eu estava simulando os dados apenas com IFD, aí depois coloquei os dados de ATU e, agora, IRD. Quando coloquei IRD, a base mudou, perdendo 29 registros. 
+
+O coeficiente IRD é estatisticamente diferente de 0 e igual a 0.13. A diferença entre o primeiro e o terceiro quartil são de 0.6 pontos, o que significa uma variação na nota do saeb de 0.078, que é bem pouca. Mas se considerarmos o mínimo e o máximo de amplitude nós teríamos uma variação maior, de 0.35. Essa variável ajuda a diminuir a diferença de algun pontos extremos.
+
+Nesse ponto vamos rodar mais um drop1:
+
+```{r}
+variaveis_interesse = c('NOTA_SAEB', 'NU_ANO_CENSO', 'QT_SALAS_UTILIZA_CLIMATIZADAS', 'IN_QUADRA_ESPORTES_COBERTA', 'IN_ORGAO_GREMIO_ESTUDANTIL', 'IN_ORGAO_OUTROS', 'PROP_INTEGRAL', 'QT_DESKTOP_ALUNO', 'IN_BANHEIRO_EI', 'IN_EJA_MED', 'IN_SECRETARIA', 'AFD_CAT_1', 'IRD')
+
+printa_r2_drop1(df, variaveis_interesse)
+```
+
+Poderíamos substituir o IN_ORGAO_GREMIO_ESTUDANTIL pelo IRD e ainda ter um R2 melhor do que o modelo anterior. Mas por enquanto vamos manter todas essas variáveis.
+
+## Indicador INSE
+
+Apesar desse indicador não poder ser colocado num dos 4 eixos, fiz as contas com ele também.
+
+Primeiro é importante ver como o R2 aumenta consideravelmente, indo pra mais de 55%:
+
+```{r}
+modelo = lm(NOTA_SAEB ~ NU_ANO_CENSO + QT_SALAS_UTILIZA_CLIMATIZADAS + IN_QUADRA_ESPORTES_COBERTA + IN_ORGAO_GREMIO_ESTUDANTIL + IN_ORGAO_OUTROS + PROP_INTEGRAL + log(QT_DESKTOP_ALUNO/100 + 1) + IN_BANHEIRO_EI + IN_EJA_MED + IN_SECRETARIA + AFD_CAT_1 + IRD + INSE_VALOR_ABSOLUTO + INSE_QTD_ALUNOS, df)
+summary(modelo)
+plot(modelo)
+```
+
+Agora vamos fazer aquele drop1 pra ter uma ideia do impacto no R2:
+
+```{r}
+variaveis_interesse = c('NOTA_SAEB', 'NU_ANO_CENSO', 'QT_SALAS_UTILIZA_CLIMATIZADAS', 'IN_QUADRA_ESPORTES_COBERTA', 'IN_ORGAO_GREMIO_ESTUDANTIL', 'IN_ORGAO_OUTROS', 'PROP_INTEGRAL', 'QT_DESKTOP_ALUNO', 'IN_BANHEIRO_EI', 'IN_EJA_MED', 'IN_SECRETARIA', 'AFD_CAT_1', 'IRD', 'INSE_VALOR_ABSOLUTO', 'INSE_QTD_ALUNOS')
+
+printa_r2_drop1(df, variaveis_interesse)
+```
+
+Com isso, vamos deixar apenas as 4 variáveis mais importantes:
+
+```{r}
+modelo = lm(NOTA_SAEB ~ NU_ANO_CENSO + PROP_INTEGRAL + log(QT_DESKTOP_ALUNO/100 + 1) + INSE_VALOR_ABSOLUTO + INSE_QTD_ALUNOS, df)
+summary(modelo)
+plot(modelo)
+```
+
+Note que mesmo com tão poucas variáveis o R2 ainda está maior do que o que tínhamos antes quando havíamos encerrado o modelo com o indicador IRD.
+
+É ainda mais interessante ver que apenas o INSE e o ensino integral juntos explicam cerca de 44% da variação nos dados:
+
+```{r}
+modelo = lm(NOTA_SAEB ~ NU_ANO_CENSO + PROP_INTEGRAL + INSE_VALOR_ABSOLUTO, df)
+summary(modelo)
+```
+
+## Incluindo duas variáveis ao modelo completo (seção indicador IRD): quantidade de profissionais psicólogos, quantidade de profissionais coordenarores.
+
+```{r}
+modelo_01 = lm(NOTA_SAEB ~ NU_ANO_CENSO + QT_SALAS_UTILIZA_CLIMATIZADAS + IN_QUADRA_ESPORTES_COBERTA + IN_ORGAO_GREMIO_ESTUDANTIL + IN_ORGAO_OUTROS + PROP_INTEGRAL + log(QT_DESKTOP_ALUNO/100 + 1) + IN_BANHEIRO_EI + IN_EJA_MED + IN_SECRETARIA + AFD_CAT_1 + IRD, df)
+
+
+modelo_02 <- lm(NOTA_SAEB ~ NU_ANO_CENSO + QT_SALAS_UTILIZA_CLIMATIZADAS + IN_QUADRA_ESPORTES_COBERTA + IN_ORGAO_GREMIO_ESTUDANTIL + IN_ORGAO_OUTROS + PROP_INTEGRAL + log(QT_DESKTOP_ALUNO/100 + 1) + IN_BANHEIRO_EI + IN_EJA_MED + IN_SECRETARIA + AFD_CAT_1 + IRD+
+                  QT_PROF_PSICOLOGO + QT_PROF_COORDENADOR, df)
+
+nobs(modelo_01)
+nobs(modelo_02)
+
+summary(modelo_01)
+summary(modelo_02)
+
+plot(modelo_01)
+plot(modelo_02)
+```
+
+As duas variáveis parecem explicar parte do que a variável banheiro EI explicava. O R quadrado melhora minimamente, mas no gráfico da distância de Cook, percebe-se que as duas variáveis introduzem outliers influentes no modelo, sobretudo a variável relativa à quantidade de coordenadores. Não há perda de observações ao introduzir essas variáveis. A variável sobre quantidade de psicólogos pode explicar o Eixo de Inovação, que busca fazer a escola mais atrativa ao jovem, tentando entender o que eleva as taxas de desistência e o desinteresse pelo estudo.
